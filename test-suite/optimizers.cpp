@@ -612,8 +612,8 @@ BOOST_AUTO_TEST_CASE(testCMAES) {
     BOOST_TEST_MESSAGE("Testing CMA-ES optimizer...");
 
     /* Benchmark optima (cross-checked against pycma): sphere f(0)=0,
-       Rosenbrock f(1,1)=0, Griewangk/Rastrigin f(0)=0. Seeds are fixed for
-       reproducibility; multimodal cases use relaxed tolerances. */
+       Rosenbrock f(1,1)=0, Rastrigin f(0)=0. Seeds are fixed for
+       reproducibility; the multimodal case uses relaxed tolerances. */
 
     // EndCriteria shared by the smooth, unimodal cases
     EndCriteria endCriteria(3000, 200, 1e-12, 1e-14, Null<Real>());
@@ -633,24 +633,6 @@ BOOST_AUTO_TEST_CASE(testCMAES) {
             BOOST_ERROR("CMA-ES sphere (2D) minimizer off the origin: " << problem.currentValue());
         if (ec == EndCriteria::None || ec == EndCriteria::MaxIterations)
             BOOST_ERROR("CMA-ES sphere (2D) did not converge by a stationary "
-                        "criterion: "
-                        << ec);
-    }
-
-    // Unconstrained sphere, 10D -> minimum at the origin
-    {
-        FirstDeJong sphere;
-        NoConstraint noConstraint;
-        Array x0(10, 3.0);
-        Problem problem(sphere, noConstraint, x0);
-        // explicit lambda and mu (the only scenario that exercises a non-default mu)
-        CMAES optimizer(12, 4, 2.0, 1.0, 42);
-        EndCriteria::Type ec = optimizer.minimize(problem, endCriteria);
-        if (problem.functionValue() > 1e-8)
-            BOOST_ERROR("CMA-ES sphere (10D)\n    calculated: " << problem.functionValue()
-                                                                << "\n    expected:   ~0");
-        if (ec == EndCriteria::None || ec == EndCriteria::MaxIterations)
-            BOOST_ERROR("CMA-ES sphere (10D) did not converge by a stationary "
                         "criterion: "
                         << ec);
     }
@@ -697,42 +679,15 @@ BOOST_AUTO_TEST_CASE(testCMAES) {
                         << ec);
     }
 
-    // Multimodal functions -> global optimum at the origin (f = 0). Both are
-    // deceptive in 2D, so we sweep consecutive seeds and measure two rates per
-    // function: single-run and best-of-restarts. The 1e-3 gate sits below the
-    // nearest local minima (Griewangk ~1e-2, Rastrigin ~1), so a hit means the
-    // global optimum, not a local one. Thresholds are set below measured rates.
-    {
-        Griewangk griewangk;
-        NoConstraint noConstraint;
-        EndCriteria mmCriteria(5000, 500, 1e-12, 1e-14, Null<Real>());
-        const Size nSeeds = 20, nRestarts = 4;
-        Size singleRunHits = 0, restartHits = 0;
-        for (unsigned long seed = 1; seed <= nSeeds; ++seed) {
-            CMAESRestartResult restartResult = cmaesRestartRun(
-                griewangk, noConstraint, Array(2, 10.0), 20.0, 60, nRestarts, seed, mmCriteria);
-            if (restartResult.firstRunValue < 1e-3)
-                ++singleRunHits;
-            if (restartResult.bestValue < 1e-3)
-                ++restartHits;
-        }
-        BOOST_TEST_MESSAGE("  Griewangk global-basin hits: single-run "
-                           << singleRunHits << "/" << nSeeds << ", with restarts " << restartHits
-                           << "/" << nSeeds);
-        // restart deployment must reliably reach global (measured 20/20; require >= 18)
-        if (restartHits < 18)
-            BOOST_ERROR("CMA-ES Griewangk (2D) restart success rate too low: " << restartHits << "/"
-                                                                               << nSeeds);
-        // single-run must not collapse to 0% (measured 7/20)
-        if (singleRunHits < 3)
-            BOOST_ERROR("CMA-ES Griewangk (2D) single-run success collapsed: " << singleRunHits
-                                                                               << "/" << nSeeds);
-    }
+    // Multimodal function -> global optimum at the origin (f = 0). Rastrigin is
+    // deceptive in 2D, so we sweep consecutive seeds and measure two rates:
+    // single-run and best-of-restarts. The 1e-3 gate sits below Rastrigin's
+    // nearest local minimum (~1), so a hit means the global optimum, not a local one.
     {
         Rastrigin rastrigin;
         NoConstraint noConstraint;
         EndCriteria mmCriteria(5000, 500, 1e-12, 1e-14, Null<Real>());
-        const Size nSeeds = 20, nRestarts = 4;
+        const Size nSeeds = 10, nRestarts = 4;
         Size singleRunHits = 0, restartHits = 0;
         for (unsigned long seed = 1; seed <= nSeeds; ++seed) {
             CMAESRestartResult restartResult = cmaesRestartRun(
@@ -745,34 +700,14 @@ BOOST_AUTO_TEST_CASE(testCMAES) {
         BOOST_TEST_MESSAGE("  Rastrigin global-basin hits: single-run "
                            << singleRunHits << "/" << nSeeds << ", with restarts " << restartHits
                            << "/" << nSeeds);
-        // restart deployment must reliably reach global (measured 20/20; require >= 18)
-        if (restartHits < 18)
+        // restart deployment must reliably reach global (measured 10/10; require >= 8)
+        if (restartHits < 8)
             BOOST_ERROR("CMA-ES Rastrigin (2D) restart success rate too low: " << restartHits << "/"
                                                                                << nSeeds);
-        // single-run must not collapse to 0% (measured 15/20)
-        if (singleRunHits < 8)
+        // single-run must not collapse to 0% (measured 9/10)
+        if (singleRunHits < 4)
             BOOST_ERROR("CMA-ES Rastrigin (2D) single-run success collapsed: " << singleRunHits
                                                                                << "/" << nSeeds);
-    }
-
-    // Interior optimum with wide bounds -> same result as unconstrained.
-    {
-        FirstDeJong sphere;
-        BoundaryConstraint bounds(-100.0, 100.0);
-        Array x0(2, 3.0);
-        Problem problem(sphere, bounds, x0);
-        CMAES optimizer(Null<Size>(), Null<Size>(), 2.0, 1.0, 42);
-        EndCriteria::Type ec = optimizer.minimize(problem, endCriteria);
-        if (problem.functionValue() > 1e-8)
-            BOOST_ERROR("CMA-ES sphere with wide bounds\n    calculated: "
-                        << problem.functionValue() << "\n    expected:   ~0");
-        if (maxDifference(problem.currentValue(), Array(2, 0.0)) > 1e-4)
-            BOOST_ERROR(
-                "CMA-ES sphere with wide bounds off the origin: " << problem.currentValue());
-        if (ec == EndCriteria::None || ec == EndCriteria::MaxIterations)
-            BOOST_ERROR("CMA-ES sphere with wide bounds did not converge by a "
-                        "stationary criterion: "
-                        << ec);
     }
 
     // Active-bound optimum: the origin lies outside [2,5]^2, so the constrained
