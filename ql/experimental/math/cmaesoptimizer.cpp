@@ -25,6 +25,7 @@
 #include <algorithm>
 #include <cmath>
 #include <limits>
+#include <numeric>
 #include <vector>
 
 namespace QuantLib {
@@ -52,16 +53,12 @@ namespace QuantLib {
 
         // recombination weights: positive, normalized to sum to one
         Array weights(mu);
-        Real wsum = 0.0;
-        for (Size i = 0; i < mu; ++i) {
-            weights[i] = std::log(0.5 * (lambda + 1.0)) - std::log(Real(i + 1));
-            wsum += weights[i];
-        }
-        weights /= wsum;
-        Real sumW2 = 0.0;
+
         for (Size i = 0; i < mu; ++i)
-            sumW2 += weights[i] * weights[i];
-        const Real muEff = 1.0 / sumW2; // variance-effective selection mass
+            weights[i] = std::log(0.5 * (lambda + 1.0)) - std::log(Real(i + 1));
+            
+        weights /= std::accumulate(weights.begin(), weights.end(), Real(0.0));
+        const Real muEff = 1.0 / DotProduct(weights, weights); // variance-effective selection mass
 
         const Real cSigma = (muEff + 2.0) / (n + muEff + 5.0);
         const Real dSigma =
@@ -173,8 +170,7 @@ namespace QuantLib {
             }
 
             // rank by penalized objective value
-            for (Size k = 0; k < lambda; ++k)
-                idx[k] = k;
+            std::iota(idx.begin(), idx.end(), Size(0));
             std::sort(idx.begin(), idx.end(), [&](Size a, Size b) { return fvals[a] < fvals[b]; });
 
             // track the best feasible point by the true (unpenalized) objective
