@@ -552,11 +552,8 @@ class Rastrigin : public CostFunction {
     }
 };
 
-// Ill-conditioned, rotated ellipsoid: f = sum_i (1e6)^{i/(n-1)} * u_i^2 with
-// u = R x (a fixed rotation that mixes adjacent coordinates).  Global minimum 0
-// at the origin.  The condition number 1e6 plus the rotation make the problem
-// both badly scaled and non-separable, so only full covariance adaptation (not
-// isotropic or diagonal-only search) can solve it within a tight budget.
+// Ill-conditioned (cond 1e6), rotated ellipsoid; global minimum 0 at the origin.
+// Badly scaled and non-separable, so it requires full covariance adaptation.
 class RotatedEllipsoid : public CostFunction {
   public:
     Array values(const Array& x) const override { return Array(x.size(), value(x)); }
@@ -584,14 +581,10 @@ struct CMAESRestartResult {
     Real bestValue;     // best objective found over the whole restart schedule
 };
 
-// Run CMA-ES on a (multimodal) problem under a fixed IPOP-style restart
-// schedule: the population doubles on each restart, and the per-restart seeds
-// are derived deterministically from `seed`, so the result is fully
-// reproducible and no individual seed is hand-picked for success.  Restarting
-// with a growing population is how CMA-ES is actually deployed on deceptive
-// problems, where a single run is frequently trapped in a local basin.  The
-// returned struct lets a test assert both the raw single-run capability and the
-// realistic restart reliability from the same set of runs.
+// Run CMA-ES under an IPOP-style restart schedule: the population doubles each
+// restart and per-restart seeds are derived deterministically from `seed`, so
+// the result stays reproducible. Returns the single-run and best-of-restarts
+// values.
 CMAESRestartResult cmaesRestartRun(CostFunction& f,
                                    Constraint& c,
                                    const Array& x0,
@@ -618,19 +611,14 @@ CMAESRestartResult cmaesRestartRun(CostFunction& f,
 BOOST_AUTO_TEST_CASE(testCMAES) {
     BOOST_TEST_MESSAGE("Testing CMA-ES optimizer...");
 
-    /* Reference minima are the analytic optima of the benchmark functions and
-       were cross-checked against the reference implementation pycma
-       (`pip install cma`) started from the same x0:
-         - sphere (FirstDeJong)   : f(0) = 0
-         - Rosenbrock (SecondDeJong): f(1,1) = 0
-         - Griewangk / Rastrigin  : f(0) = 0 (multimodal)
-       Stochastic optimizer: the seed is fixed for reproducibility and the
-       multimodal cases use relaxed tolerances. */
+    /* Benchmark optima (cross-checked against pycma): sphere f(0)=0,
+       Rosenbrock f(1,1)=0, Griewangk/Rastrigin f(0)=0. Seeds are fixed for
+       reproducibility; multimodal cases use relaxed tolerances. */
 
     // EndCriteria shared by the smooth, unimodal cases
     EndCriteria endCriteria(3000, 200, 1e-12, 1e-14, Null<Real>());
 
-    // 1a. Unconstrained sphere, 2D -> minimum at the origin
+    // Unconstrained sphere, 2D -> minimum at the origin
     {
         FirstDeJong sphere;
         NoConstraint noConstraint;
@@ -649,7 +637,7 @@ BOOST_AUTO_TEST_CASE(testCMAES) {
                         << ec);
     }
 
-    // 1b. Unconstrained sphere, 10D -> minimum at the origin
+    // Unconstrained sphere, 10D -> minimum at the origin
     {
         FirstDeJong sphere;
         NoConstraint noConstraint;
@@ -667,7 +655,7 @@ BOOST_AUTO_TEST_CASE(testCMAES) {
                         << ec);
     }
 
-    // 2. Unconstrained Rosenbrock, 2D -> minimum at (1,1)
+    // Unconstrained Rosenbrock, 2D -> minimum at (1,1)
     {
         SecondDeJong rosenbrock;
         NoConstraint noConstraint;
@@ -688,11 +676,8 @@ BOOST_AUTO_TEST_CASE(testCMAES) {
                         << ec);
     }
 
-    // 2b. Ill-conditioned, rotated ellipsoid (condition number 1e6), 10D.
-    //     This is the case that actually exercises covariance adaptation: the
-    //     problem is both badly scaled and non-separable, so an isotropic or
-    //     diagonal-only search would stagnate well short of the optimum within
-    //     this budget, while correct rank-one + rank-mu adaptation reaches ~0.
+    // Ill-conditioned rotated ellipsoid (cond 1e6), 10D: exercises full
+    // covariance adaptation (an isotropic/diagonal search would stagnate).
     {
         RotatedEllipsoid ellipsoid;
         NoConstraint noConstraint;
@@ -712,20 +697,11 @@ BOOST_AUTO_TEST_CASE(testCMAES) {
                         << ec);
     }
 
-    // 3. Multimodal functions -> the GLOBAL optimum at the origin (f = 0).
-    //    Both functions are deceptive in 2D, so a single CMA-ES run is often
-    //    trapped in a local basin.  Rather than report the best of a few hand-
-    //    picked seeds (which hides the true success rate and overfits specific
-    //    RNG trajectories), we sweep a full set of consecutive seeds and measure
-    //    two reproducible quantities per function:
-    //      * single-run rate  -- raw per-run global-convergence capability;
-    //      * restart rate     -- reliability under the IPOP-style restart
-    //                            schedule (growing population) in which CMA-ES
-    //                            is actually deployed on deceptive problems.
-    //    Each threshold is set with margin below its measured rate.  The 1e-3
-    //    gate sits safely below the lowest non-global minimum (nearest Griewangk
-    //    local minima ~1e-2, Rastrigin's ~1), so a hit requires the global
-    //    optimum, not merely a nearby local one.
+    // Multimodal functions -> global optimum at the origin (f = 0). Both are
+    // deceptive in 2D, so we sweep consecutive seeds and measure two rates per
+    // function: single-run and best-of-restarts. The 1e-3 gate sits below the
+    // nearest local minima (Griewangk ~1e-2, Rastrigin ~1), so a hit means the
+    // global optimum, not a local one. Thresholds are set below measured rates.
     {
         Griewangk griewangk;
         NoConstraint noConstraint;
@@ -743,13 +719,11 @@ BOOST_AUTO_TEST_CASE(testCMAES) {
         BOOST_TEST_MESSAGE("  Griewangk global-basin hits: single-run "
                            << singleRunHits << "/" << nSeeds << ", with restarts " << restartHits
                            << "/" << nSeeds);
-        // primary guard: realistic restart deployment must reliably reach global
-        // (measured 20/20 on this build; require >= 18 for cross-platform margin)
+        // restart deployment must reliably reach global (measured 20/20; require >= 18)
         if (restartHits < 18)
             BOOST_ERROR("CMA-ES Griewangk (2D) restart success rate too low: " << restartHits << "/"
                                                                                << nSeeds);
-        // secondary floor: raw single-run exploration must not collapse
-        // (measured 7/20; this only catches a collapse toward 0%)
+        // single-run must not collapse to 0% (measured 7/20)
         if (singleRunHits < 3)
             BOOST_ERROR("CMA-ES Griewangk (2D) single-run success collapsed: " << singleRunHits
                                                                                << "/" << nSeeds);
@@ -771,19 +745,17 @@ BOOST_AUTO_TEST_CASE(testCMAES) {
         BOOST_TEST_MESSAGE("  Rastrigin global-basin hits: single-run "
                            << singleRunHits << "/" << nSeeds << ", with restarts " << restartHits
                            << "/" << nSeeds);
-        // primary guard: realistic restart deployment must reliably reach global
-        // (measured 20/20 on this build; require >= 18 for cross-platform margin)
+        // restart deployment must reliably reach global (measured 20/20; require >= 18)
         if (restartHits < 18)
             BOOST_ERROR("CMA-ES Rastrigin (2D) restart success rate too low: " << restartHits << "/"
                                                                                << nSeeds);
-        // secondary floor: raw single-run exploration must not collapse
-        // (measured 15/20)
+        // single-run must not collapse to 0% (measured 15/20)
         if (singleRunHits < 8)
             BOOST_ERROR("CMA-ES Rastrigin (2D) single-run success collapsed: " << singleRunHits
                                                                                << "/" << nSeeds);
     }
 
-    // 4. Interior optimum with wide bounds -> same result as unconstrained.
+    // Interior optimum with wide bounds -> same result as unconstrained.
     {
         FirstDeJong sphere;
         BoundaryConstraint bounds(-100.0, 100.0);
@@ -803,9 +775,8 @@ BOOST_AUTO_TEST_CASE(testCMAES) {
                         << ec);
     }
 
-    // 5. Active-bound optimum: the unconstrained minimizer (origin) lies
-    //    outside the box [2,5]^2, so the constrained optimum sits on the
-    //    lower boundary at (2,2) with f = 8 and must be feasible.
+    // Active-bound optimum: the origin lies outside [2,5]^2, so the constrained
+    // optimum sits on the lower boundary at (2,2) with f = 8.
     {
         FirstDeJong sphere;
         BoundaryConstraint bounds(2.0, 5.0);
@@ -818,7 +789,6 @@ BOOST_AUTO_TEST_CASE(testCMAES) {
         if (std::any_of(xMin.begin(), xMin.end(),
                         [](Real xi) { return xi < 2.0 - 1e-8 || xi > 5.0 + 1e-8; }))
             BOOST_ERROR("CMA-ES active-bound solution infeasible: " << xMin);
-        // sits on the active (lower) boundary at (2,2)
         if (maxDifference(xMin, Array(2, 2.0)) > 1e-3)
             BOOST_ERROR("CMA-ES active-bound solution not on the boundary: " << xMin);
         if (std::fabs(problem.functionValue() - 8.0) > 1e-4)
@@ -826,10 +796,8 @@ BOOST_AUTO_TEST_CASE(testCMAES) {
                                                                 << "\n    expected:   8");
     }
 
-    // 5b. Per-coordinate bounds (NonhomogeneousBoundaryConstraint): one
-    //     coordinate has an active bound, the other a wide interior bound, so
-    //     the constrained minimizer is (2,0).  Exercises the mixed bounded /
-    //     unbounded code path that the symmetric BoundaryConstraint never hits.
+    // Per-coordinate bounds: coord 0 active, coord 1 interior, so the
+    // minimizer is (2,0). Exercises the mixed bounded/unbounded path.
     {
         FirstDeJong sphere;
         Array lo(2), hi(2);
@@ -852,9 +820,8 @@ BOOST_AUTO_TEST_CASE(testCMAES) {
             BOOST_ERROR("CMA-ES per-coordinate bounds, wrong minimizer: " << xMin);
     }
 
-    // 5c. Infeasible starting point: x0 lies above the box [2,5]^2, so the
-    //     initial guess must be repaired into the box; the run should still
-    //     converge to the constrained optimum (2,2) and report a feasible point.
+    // Infeasible start: x0 lies above [2,5]^2 and must be repaired; the run
+    // should still converge to (2,2) and report a feasible point.
     {
         FirstDeJong sphere;
         BoundaryConstraint bounds(2.0, 5.0);
@@ -870,7 +837,7 @@ BOOST_AUTO_TEST_CASE(testCMAES) {
             BOOST_ERROR("CMA-ES infeasible-start did not reach (2,2): " << xMin);
     }
 
-    // 6. Reproducibility: two runs with the same seed give identical results.
+    // Reproducibility: two runs with the same seed give identical results.
     {
         FirstDeJong sphere;
         NoConstraint noConstraint;
@@ -890,9 +857,8 @@ BOOST_AUTO_TEST_CASE(testCMAES) {
                         << "\n    run 1: " << p1.currentValue() << " f=" << p1.functionValue()
                         << "\n    run 2: " << p2.currentValue() << " f=" << p2.functionValue());
 
-        // different seed -> different trajectory.  A short budget keeps both
-        // runs away from the (shared) optimum, so identical results here would
-        // mean the seed is ignored or the sampler is dead.
+        // different seed -> different trajectory. A short budget keeps both runs
+        // away from the optimum, so identical results would mean the seed is ignored.
         EndCriteria shortCriteria(3, 2, 1e-12, 1e-14, Null<Real>());
         Problem pa(sphere, noConstraint, x0);
         CMAES oa(Null<Size>(), Null<Size>(), 1.5, 1.0, 12345);
@@ -906,7 +872,7 @@ BOOST_AUTO_TEST_CASE(testCMAES) {
                         << pa.currentValue());
     }
 
-    // 7. Input validation: the constructor and minimize() guards must throw.
+    // Input validation: the constructor and minimize() guards must throw.
     {
         BOOST_CHECK_THROW(CMAES(Null<Size>(), Null<Size>(), -1.0), Error);      // sigma <= 0
         BOOST_CHECK_THROW(CMAES(Null<Size>(), Null<Size>(), 1.0, -1.0), Error); // penalty < 0
