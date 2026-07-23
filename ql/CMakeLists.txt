@@ -400,6 +400,7 @@ set(QL_SOURCES
     math/optimization/differentialevolution.cpp
     math/optimization/endcriteria.cpp
     math/optimization/goldstein.cpp
+    math/optimization/lbfgsb.cpp
     math/optimization/leastsquare.cpp
     math/optimization/levenbergmarquardt.cpp
     math/optimization/linesearch.cpp
@@ -1537,6 +1538,7 @@ set(QL_HEADERS
     math/optimization/differentialevolution.hpp
     math/optimization/endcriteria.hpp
     math/optimization/goldstein.hpp
+    math/optimization/lbfgsb.hpp
     math/optimization/leastsquare.hpp
     math/optimization/levenbergmarquardt.hpp
     math/optimization/linesearch.hpp
