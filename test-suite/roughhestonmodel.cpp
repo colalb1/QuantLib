@@ -193,11 +193,11 @@ BOOST_AUTO_TEST_CASE(testRiemannLiouvilleIntegral) {
 BOOST_AUTO_TEST_CASE(testRiemannLiouvilleWeightReuse) {
     BOOST_TEST_MESSAGE("Testing reusable Riemann-Liouville quadrature weights...");
 
-    // The weights of a given (alpha, steps) are what riemannLiouvilleIntegral
-    // rebuilds on every call, so a cached set has to reproduce it bit for bit:
-    // anything looser would let a reassociation through unnoticed.  Integrating
-    // repeatedly through one object, against a free function that rebuilds its
-    // weights every time, is also what shows the cached object is stateless.
+    // testRiemannLiouvilleIntegral above already validates the arithmetic
+    // against the closed form, and now reaches it through this class, so it is
+    // not repeated here.  What is new is that one object is integrated many
+    // times: it has to stay stateless, so that a cached set of weights gives
+    // exactly what a set built for that one call would have given.
     //
     // steps = 1 leaves the interior loop empty, steps = 2 runs it once and
     // reaches index 0 of the power table, steps = 256 is the engine default.
@@ -211,43 +211,41 @@ BOOST_AUTO_TEST_CASE(testRiemannLiouvilleWeightReuse) {
             complex[i] = std::complex<Real>(real[i], std::sin(37.0 * x));
         }
 
-        // 0 and 1 are the degenerate orders, 0.25 the fractional one the engine
-        // asks for at H = 0.25
-        for (const Real alpha : {0.0, 0.25, 1.0})
-            for (const Real dt : {1e-3, 0.5}) {
-                const RiemannLiouvilleWeights w(alpha, steps);
+        // 0 and 1 are the degenerate orders; 0.25 is the fractional one the
+        // engine asks for at H = 0.25
+        for (const Real alpha : {0.0, 0.25, 1.0}) {
+            const RiemannLiouvilleWeights reused(alpha, steps);
 
-                const Real calculated{w.integrate(real, dt)};
+            // the spacing varies with the maturity while the weights do not,
+            // so a reused object has to survive a change of dt
+            for (const Real dt : {1e-3, 0.5}) {
+                const Real calculated{reused.integrate(real, dt)};
                 const Real expected{riemannLiouvilleIntegral(real, alpha, dt)};
 
                 if (value(calculated) != value(expected))
-                    BOOST_ERROR("cached weights do not reproduce "
-                                "riemannLiouvilleIntegral exactly"
-                                << "\n    alpha:      " << alpha
-                                << "\n    steps:      " << steps
+                    BOOST_ERROR("reused weights do not reproduce freshly built ones"
+                                << "\n    alpha:      " << alpha << "\n    steps:      " << steps
                                 << "\n    dt:         " << dt
                                 << "\n    calculated: " << std::setprecision(17) << calculated
                                 << "\n    expected:   " << std::setprecision(17) << expected);
 
                 // production only ever integrates complex vectors
-                const std::complex<Real> calculatedC{w.integrate(complex, dt)};
+                const std::complex<Real> calculatedC{reused.integrate(complex, dt)};
                 const std::complex<Real> expectedC{
                     riemannLiouvilleIntegral(complex, alpha, dt)};
 
                 if (value(calculatedC.real()) != value(expectedC.real())
                     || value(calculatedC.imag()) != value(expectedC.imag()))
-                    BOOST_ERROR("cached weights do not reproduce the complex "
-                                "riemannLiouvilleIntegral exactly"
-                                << "\n    alpha:      " << alpha
-                                << "\n    steps:      " << steps
+                    BOOST_ERROR("reused weights do not reproduce freshly built ones "
+                                "on the complex path"
+                                << "\n    alpha:      " << alpha << "\n    steps:      " << steps
                                 << "\n    dt:         " << dt
                                 << "\n    calculated: " << std::setprecision(17) << calculatedC
                                 << "\n    expected:   " << std::setprecision(17) << expectedC);
             }
+        }
     }
 
-    // Independent oracles: the two orders whose value is known in closed form,
-    // which agreement with riemannLiouvilleIntegral alone would not catch.
     const Size steps{64};
     const Real dt{0.01};
 
@@ -255,11 +253,9 @@ BOOST_AUTO_TEST_CASE(testRiemannLiouvilleWeightReuse) {
     for (Size i{0}; i <= steps; ++i)
         y[i] = 1.0 + std::sin(Real(i));
 
-    // alpha -> 0 recovers the identity: every weight vanishes and only the
-    // last grid value survives
-    QL_CHECK_CLOSE(RiemannLiouvilleWeights(0.0, steps).integrate(y, dt), y[steps], 1e-12);
-
-    // alpha = 1 is the trapezoidal rule
+    // An oracle for the weights themselves rather than for the integral: at
+    // alpha = 1 they have to be exactly the trapezoidal rule, which pins down
+    // the formula more tightly than agreement with I^a t^p to 5e-5 does.
     Real trapezoid{0.5 * (y[0] + y[steps])};
     for (Size i{1}; i < steps; ++i)
         trapezoid += y[i];
@@ -268,7 +264,7 @@ BOOST_AUTO_TEST_CASE(testRiemannLiouvilleWeightReuse) {
     QL_CHECK_CLOSE(RiemannLiouvilleWeights(1.0, steps).integrate(y, dt), trapezoid, 1e-10);
 
     // steps = 0 would underflow (steps - 1) into an out-of-bounds index, and a
-    // grid size that does not match the weights is the error a caller reusing a
+    // grid that does not match the weights is the mistake a caller reusing a
     // cached object will make
     BOOST_CHECK_THROW(RiemannLiouvilleWeights(0.6, 0), Error);
     BOOST_CHECK_THROW(RiemannLiouvilleWeights(-1e-8, steps), Error);
