@@ -131,9 +131,20 @@ namespace QuantLib {
             // term of the update below is elementwise symmetric.
             L = CholeskyDecomposition(C, true);
 
+            /*  
+                A pivot at or below the floor means that direction has
+                collapsed. Flooring the diagonal alone is not sufficient as the
+                subsequent column was already divided by the pre-floor pivot.
+                This means L would factor nothing like C. Thus we zero it, leaving the
+                direction contributing only its floored variance.
+            */
             for (Size i{0}; i < n; ++i) {
                 if (!(L[i][i] > pivotFloor)) {
                     L[i][i] = pivotFloor;
+
+                    for (Size j{i + 1}; j < n; ++j) {
+                        L[j][i] = 0.0;
+                    }
                 }
             }
 
